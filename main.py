@@ -13,7 +13,7 @@ from base64 import b64encode
 from hashlib import sha1
 from hmac import new
 
-os.system('pip install -r requirements.txt')
+
 
 from websocket import WebSocketApp, WebSocketConnectionClosedException
 from requests import Session
