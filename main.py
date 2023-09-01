@@ -1,279 +1,300 @@
-#  by ReYeS
-#    _;)  ~~8:> ~~8:>
-#  Update by V¡ktor
-#  https://github.com/ViktorSky/amino-coin-generator
-
-import os
-import time
 import json
+import requests
+from time import time as timestamp
 from datetime import datetime
-from random import randint
-from threading import Thread
-from base64 import b64encode
+from time import sleep
+import base64
+from json_minify import json_minify
+# from aminofix import objects
+from concurrent.futures import  ThreadPoolExecutor,ProcessPoolExecutor
+from binascii import hexlify
+from os import path
+import json
+import os
+from uuid import UUID
+import random
+import hmac
+from os import urandom
+from pytz import timezone
+from functools import reduce
+from base64 import b64decode, b64encode
+from typing import Union
 from hashlib import sha1
 from hmac import new
-
-
-
-from websocket import WebSocketApp, WebSocketConnectionClosedException
-from requests import Session
-from yarl import URL
-import pytz
-from flask import Flask
-from json_minify import json_minify
-
-
-parameters = {
-    "community-link":
-        "http://aminoapps.com/invite/E5BQIXQ6LC",
-    "accounts-file":
-        "acc.json",
-    "proxies": {
-        "https": None
-    }
-}
-
-PREFIX = '19'
-DEVKEY = 'e7309ecc0953c6fa60005b2765f99dbbc965c8e9'
-SIGKEY = 'dfa5ed192dda6e88a12fe12130dc6206b1251e44'
-
-# -----------------FLASK-APP-----------------
-flask_app = Flask('amino-coin-generator')
-@flask_app.route('/')
-def home():
-    return "~~8;> ~~8;>"
-
-def run():
-    flask_app.run('0.0.0.0', randint(2000, 9000))
-# -------------------------------------------
-
-
-class Client:
-    api = "https://service.aminoapps.com/api/v1"
-
-    def __init__(self, device=None, proxies=None) -> None:
-        self.device = device or self.generate_device()
-        self.proxies = proxies or {}
-        self.session = Session()
-        self.socket = None
-        self.socket_thread = None
-        self.sid = None
-        self.auid = None
-
-    def build_headers(self, data=None):
-        headers = {
-            "NDCDEVICEID": self.device,
-            "SMDEVICEID": "b89d9a00-f78e-46a3-bd54-6507d68b343c",
-            "Accept-Language": "en-EN",
-            "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
-            "User-Agent": "Apple iPhone12,1 iOS v15.5 Main/3.12.2",
-            "Host": "service.narvii.com",
-            "Accept-Encoding": "gzip",
-            "Connection": "Keep-Alive"
-        }
-        if data:
-            headers["NDC-MSG-SIG"] = self.generate_signature(data)
-        if self.sid:
-            headers["NDCAUTH"] = "sid=%s" % self.sid
-        if self.auid:
-            headers["AUID"] = self.auid
-        return headers
-
-    def generate_signature(self, data):
-        return b64encode(
-            bytes.fromhex(PREFIX) + new(
-                bytes.fromhex(SIGKEY),
-                data.encode("utf-8"),
-                sha1
-            ).digest()
-        ).decode("utf-8")
-
-    def generate_device(self):
-        info = bytes.fromhex(PREFIX) + os.urandom(20)
-        return info.hex() + new(
-            bytes.fromhex(DEVKEY),
-            info, sha1
-        ).hexdigest()
-
-    def ws_send(self, data):
-        if self.sid is None:
-            return
-        final = f"%s|%d" % (self.device, int(time.time() * 1000))
-        kwargs = {}
-        proxy = self.proxies.get('https')
-        if proxy:
-            url = URL(f"https://{proxy}" if "http" not in proxy else proxy)
-            kwargs["proxy_type"] = url.scheme if 'http' in url.scheme else 'https'
-            kwargs["http_proxy_host"] = url.host
-            kwargs["http_proxy_port"] = url.port
-            if url.user:
-                kwargs["http_proxy_auth"] = (url.user, url.password)
-        socket_url = URL("wss://ws%d.aminoapps.com/?signbody=%s")
-        if not kwargs.get("proxy_type", "https").endswith("s"):
-            socket_url = socket_url.with_scheme("ws")
-        for n in range(4, 0, -1):
-            try:
-                self.socket = WebSocketApp(
-                    socket_url.human_repr() % (n, final.replace('|', '%7C')),
-                    header=self.build_headers(final)
-                )
-                self.socket_thread = Thread(
-                    target=self.socket.run_forever,
-                    kwargs=kwargs
-                )
-                self.socket_thread.start()
-                time.sleep(3.2)
-                return self.socket.send(data)
-            except WebSocketConnectionClosedException:
-                continue
-
-    def login(self, email, password):
-        data = json.dumps({
-             "email": email,
-             "secret": "0 %s" % password,
-             "deviceID": self.device,
-             "clientType": 100,
-             "action": "normal",
-             "timestamp": int(time.time() * 1000)
-        })
-        request = self.session.post(
-            url="%s/g/s/auth/login" % self.api,
-            data=data,
-            headers=self.build_headers(data),
-            proxies=self.proxies
-        ).json()
-        self.sid = request.get("sid")
-        self.auid = request.get("auid")
-        return request
-
-    def join_community(self, ndcId, invitationId=None):
-        data = {"timestamp": int(time.time() * 1000)}
-        if invitationId:
-            data["invitationId"] = invitationId
-        data = json.dumps(data)
-        return self.session.post(
-            url="%s/x%s/s/community/join?sid=%s&auid=%s" % (self.api, ndcId, self.sid, self.auid),
-            data=data,
-            headers=self.build_headers(data),
-            proxies=self.proxies
-        ).json()
-
-    def send_active_object(self, ndcId, timers=None, timezone=0):
-        data = json_minify(json.dumps({
-            "userActiveTimeChunkList": timers,
-            "timestamp": int(time.time() * 1000),
-            "optInAdsFlags": 2147483647,
-            "timezone": timezone
-        }))
-        return self.session.post(
-            url="%s/x%s/s/community/stats/user-active-time?sid=%s&auid=%s" % (self.api, ndcId, self.sid, self.auid),
-            data=data,
-            headers=self.build_headers(data),
-            proxies=self.proxies
-        ).json()
-
-    def watch_ad(self):
-        return self.session.post(
-            "%s/g/s/wallet/ads/video/start?sid=%s&auid=%s" % (self.api, self.sid, self.auid),
-            headers=self.build_headers(),
-            proxies=self.proxies
-        ).json()
-
+import sys
+#sys.stdin.reconfigure(encoding='utf-8')
+#sys.stdout.reconfigure(encoding='utf-8')
+from itertools import cycle
+ 
+THIS_FOLDER = path.dirname(path.abspath(__file__))
+account_file = path.join(THIS_FOLDER, "ids.json")
+secrets=[]
+ 
+with open(account_file) as file:
+    secrets = json.load(file)
+ 
+import json
+ 
+ 
+PREFIX = bytes.fromhex("19")
+SIG_KEY = bytes.fromhex("DFA5ED192DDA6E88A12FE12130DC6206B1251E44")
+DEVICE_KEY = bytes.fromhex("E7309ECC0953C6FA60005B2765F99DBBC965C8E9")
+count=0
+links = [
+    "https://proxy69.vercel.app/proxy?url="
+]
+ 
+comids=['205677143','75300990']
+ 
+list_com=cycle(comids)
+ 
+logins = cycle(links)
+ 
+api="https://service.aminoapps.com/api/v1"
+ 
+def get_com():
     
-    def get_from_link(self, link):
-        return self.session.get(
-            url="%s/g/s/link-resolution?q=%s" % (self.api, link),
-            headers=self.build_headers(),
-            proxies=self.proxies
-        ).json()
-
-    def lottery(self, ndcId, timezone=0):
-        data = json.dumps({
-            "timezone": timezone,
-            "timestamp": int(time.time() * 1000)
-        })
-        return self.session.post(
-            url="%s/x%s/s/check-in/lottery?sid=%s&auid=%s" % (self.api, ndcId, self.sid, self.auid),
-            data=data,
-            headers=self.build_headers(data),
-            proxies=self.proxies
-        ).json()
-
-    def show_online(self, ndcId):
-        self.ws_send(json.dumps({
-            "o": {
-                "actions": ["Browsing"],
-                "target": "ndc://x%s/" % ndcId,
-                "ndcId": int(ndcId),
-                "id": "82333"
-            },
-            "t": 304
-        }))
-
-
-class Config:
-    def __init__(self):
-        with open(parameters["accounts-file"], "r") as config:
-            self.account_list = json.load(config)
-
-
-class App:
-    def __init__(self):
-        self.proxies = parameters["proxies"]
-        self.client = Client(proxies=self.proxies)
-        info = self.client.get_from_link(parameters["community-link"])
-        try: extensions = info["linkInfoV2"]["extensions"]
-        except KeyError:
-            raise RuntimeError('community: %s' % info["api:message"])
-        self.ndcId = extensions["community"]["ndcId"]
-        self.invitationId = extensions.get("invitationId")
-
-    def tzc(self):
-        for _ in ['Etc/GMT' + (f'+{i}' if i > 0 else str(i)) for i in range(-12, 12)]:
-            zone = datetime.now(pytz.timezone(_))
-            if zone.hour != 23:
-                continue
-            return int(zone.strftime('%Z').replace('GMT', '00')) * 60
-        return 0
-
-    def generation(self, email, password, device):
-        if device:
-            self.client.device = device
-        start = time.time()
-        try:
-            message = self.client.login(email, password)['api:message']
-            print("\n[\033[1;31mcoins-generator\033[0m][\033[1;34mlogin\033[0m][%s]: %s." % (email, message))
-            message = self.client.join_community(self.ndcId, self.invitationId)['api:message']
-            print("[\033[1;31mcoins-generator\033[0m][\033[1;36mjoin-community\033[0m]: %s." % message)
-            self.client.show_online(self.ndcId)
-            message = self.client.lottery(self.ndcId, self.tzc())['api:message']
-            print("[\033[1;31mcoins-generator\033[0m][\033[1;32mlottery\033[0m]: %s" % message)
-            message = self.client.watch_ad()['api:message']
-            print("[\033[1;31mcoins-generator\033[0m][\033[1;33mwatch-ad\033[0m]: %s." % message)
-            for _ in range(24):
-                timers = [{'start': int(time.time()), 'end': int(time.time()) + 300} for _ in range(50)]
-                message = self.client.send_active_object(self.ndcId, timers, self.tzc())['api:message']
-                print("[\033[1;31mcoins-generator\033[0m][\033[1;35mmain-proccess\033[0m][%s]: %s." % (email, message))
-                time.sleep(4)
-            end = int(time.time() - start)
-            total = ("%d minutes" % round(end/60)) if end > 90 else ("%d seconds" % end)
-            print("[\033[1;31mcoins-generator\033[0m][\033[1;25;32mend\033[0m]: Finished in %s." % total)
-        except Exception as error:
-            print("[\033[1;31mC01?-G3?3R4?0R\033[0m]][\033[1;31merror\033[0m]]: %s(%s)" % (type(error).__name__, error))
-
-    def run(self):
-        print("\033[1;31m @@@@@@   @@@@@@@@@@   @@@  @@@  @@@   @@@@@@ \033[0m     \033[1;32m @@@@@@@   @@@@@@   @@@  @@@  @@@   @@@@@@\033[0m\n\033[1;31m@@@@@@@@  @@@@@@@@@@@  @@@  @@@@ @@@  @@@@@@@@\033[0m     \033[1;32m@@@@@@@@  @@@@@@@@  @@@  @@@@ @@@  @@@@@@@\033[0m\n\033[1;31m@@!  @@@  @@! @@! @@!  @@!  @@!@!@@@  @@!  @@@\033[0m     \033[1;32m!@@       @@!  @@@  @@!  @@!@!@@@  !@@\033[0m\n\033[1;31m!@!  @!@  !@! !@! !@!  !@!  !@!!@!@!  !@!  @!@\033[0m     \033[1;32m!@!       !@!  @!@  !@!  !@!!@!@!  !@!\033[0m\n\033[1;31m@!@!@!@!  @!! !!@ @!@  !!@  @!@ !!@!  @!@  !@!\033[0m     \033[1;32m!@!       @!@  !@!  !!@  @!@ !!@!  !!@@!!\033[0m\n\033[1;31m!!!@!!!!  !@!   ! !@!  !!!  !@!  !!!  !@!  !!!\033[0m     \033[1;32m!!!       !@!  !!!  !!!  !@!  !!!   !!@!!!\033[0m\n\033[1;31m!!:  !!!  !!:     !!:  !!:  !!:  !!!  !!:  !!!\033[0m     \033[1;32m:!!       !!:  !!!  !!:  !!:  !!!       !:!\033[0m\n\033[1;31m:!:  !:!  :!:     :!:  :!:  :!:  !:!  :!:  !:!\033[0m     \033[1;32m:!:       :!:  !:!  :!:  :!:  !:!      !:!\033[0m\n\033[1;31m::   :::  :::     ::    ::   ::   ::  ::::: ::\033[0m     \033[1;32m ::: :::  ::::: ::   ::   ::   ::  :::: ::\033[0m\n\033[1;31m :   : :   :      :    :    ::    :    : :  : \033[0m     \033[1;32m :: :: :   : :  :   :    ::    :   :: : :\033[0m\n\033[1;33m @@@@@@@@  @@@@@@@@  @@@  @@@  @@@@@@@@  @@@@@@@    @@@@@@   @@@@@@@   @@@@@@   @@@@@@@\033[0m\n\033[1;33m@@@@@@@@@  @@@@@@@@  @@@@ @@@  @@@@@@@@  @@@@@@@@  @@@@@@@@  @@@@@@@  @@@@@@@@  @@@@@@@@\033[0m\n\033[1;33m!@@        @@!       @@!@!@@@  @@!       @@!  @@@  @@!  @@@    @@!    @@!  @@@  @@!  @@@\033[0m\n\033[1;33m!@!        !@!       !@!!@!@!  !@!       !@!  @!@  !@!  @!@    !@!    !@!  @!@  !@!  @!@\033[0m\n\033[1;33m!@! @!@!@  @!!!:!    @!@ !!@!  @!!!:!    @!@!!@!   @!@!@!@!    @!!    @!@  !@!  @!@!!@!\033[0m\n\033[1;33m!!! !!@!!  !!!!!:    !@!  !!!  !!!!!:    !!@!@!    !!!@!!!!    !!!    !@!  !!!  !!@!@!\033[0m\n\033[1;33m:!!   !!:  !!:       !!:  !!!  !!:       !!: :!!   !!:  !!!    !!:    !!:  !!!  !!: :!!\033[0m\n\033[1;33m:!:   !::  :!:       :!:  !:!  :!:       :!:  !:!  :!:  !:!    :!:    :!:  !:!  :!:  !:!\033[0m\n\033[1;33m ::: ::::   :: ::::   ::   ::   :: ::::  ::   :::  ::   :::     ::    ::::: ::  ::   :::\033[0m\n\033[1;33m :: :: :   : :: ::   ::    :   : :: ::    :   : :   :   : :     :      : :  :    :   : :\033[0m\n\033[1;35m__By ReYeS\033[0m / \033[1;36mREPLIT_EDITION\033[0m\n")
-        while True:
-            for acc in Config().account_list:
-                e = acc['email']
-                p = acc['password']
-                d = acc['device']
-                self.generation(e, p, d)
-
-if __name__ == "__main__":
-    os.system("cls" if os.name == 'nt' else "clear")
-    Thread(target=run).start()
+      return next(list_com)
+ 
+ 
+def get_total(sid):
     try:
-        App().run()
-    except KeyboardInterrupt:
-        os.abort()
+        response = requests.get(f"{next(logins)}{api}/g/s/wallet", headers=get_headers(sid))
+        if response.status_code==200:
+                resp=json.loads(response.text)
+                coins=resp["wallet"]["totalCoins"]
+                return coins
+        elif response.status_code==403:
+                return get_total(sid)
+        else:
+                print(json.loads(response.text)["api:message"])
+                return 80
+    except requests.exceptions.ProxyError as e:
+            return get_total(sid)
+    
+def collect(sid,coins,em,chatId):
+    
+    try:
+        transactionId = str(UUID(hexlify(urandom(16)).decode('ascii')))
+        data = {
+                "coins": coins,
+                "tippingContext": {"transactionId": transactionId},
+                "timestamp": int(timestamp() * 1000)
+            }
+        
+        url = f"{next(logins)}{api}/g/s/chat/thread/{chatId}/tipping"
+        data = json.dumps(data)
+        response = requests.post(url, headers=get_headers(sid,data), data=data)
+        if response.status_code==200:
+                resp=json.loads(response.text)
+                if resp['api:message']=='OK':
+                        print(f'collected {coins}')
+        elif response.status_code==403:
+                return collect(sid,coins,em,chatId)
+        else:
+                print(json.loads(response.text)["api:message"])
+                return None
+    except requests.exceptions.ProxyError as e:
+             return collect(sid,coins,em,chatId)
+ 
+def tzFilter(hour: int = 23, tz: str = None) -> int:
+ 
+    zones = ["Etc/GMT" + (f"+{i}" if i > 0 else f"{i}") for i in range(-12, 12)]
+ 
+    return next(
+        int(datetime.now(timezone(_)).strftime("%Z").replace("GMT", "00")) * 60
+        for _ in ([tz] if tz else zones)
+        if (tz or (int(datetime.now(timezone(_)).strftime("%H")) == hour))
+    )
+ 
+ 
+def gen_deviceId(data: bytes = None) -> str:
+    if isinstance(data, str):
+        data = bytes(data, 'utf-8')
+    identifier = PREFIX + (data or os.urandom(20))
+    mac = hmac.new(DEVICE_KEY, identifier, sha1)
+    return f"{identifier.hex()}{mac.hexdigest()}".upper()
+ 
+def sig(data: Union[str, bytes]) -> str:
+    data = data if isinstance(data, bytes) else data.encode("utf-8")
+    signature = hmac.new(SIG_KEY, data, sha1)
+    return b64encode(PREFIX + signature.digest()).decode("utf-8")
+ 
+def get_total(sid):
+    
+    response = requests.get(f"{next(logins)}{api}/g/s/wallet", headers=get_headers(sid))
+    if response.status_code==200:
+            resp=json.loads(response.text)
+            coins=resp["wallet"]["totalCoins"]
+            return coins
+    elif response.status_code==403:
+             get_total(sid)
+    else:
+            print(json.loads(response.text)["api:message"])
+            return 80
+    
+    
+    
+ 
+def get_headers(sid=None,data=None):
+    headers={
+    'Accept-Language': 'en-US', 
+    'Content-Type': 'application/x-www-form-urlencoded', 
+    'User-Agent': 'Apple iPhone12,1 iOS v15.5 Main/3.12.2', 
+    #'Host': 'service.aminoapps.com', 
+    'Accept-Encoding': 'gzip',
+    'Connection': 'Upgrade',
+    'NDCDEVICEID':gen_deviceId()
+    }
+    if sid:
+        headers['NDCAUTH']=f"sid={sid}"
+    if data:
+        headers["NDC-MSG-SIG"]=sig(data)
+        headers["Content-Length"] = str(len(data))
+    return headers
+ 
+ 
+def collect(sid,coins,em,chatId):
+    
+ 
+    transactionId = str(UUID(hexlify(urandom(16)).decode('ascii')))
+    data = {
+            "coins": coins,
+            "tippingContext": {"transactionId": transactionId},
+            "timestamp": int(timestamp() * 1000)
+        }
+    
+    url = f"{next(logins)}{api}/g/s/chat/thread/{chatId}/tipping"
+    data = json.dumps(data)
+    response = requests.post(url, headers=get_headers(sid,data), data=data)
+    if response.status_code==200:
+            resp=json.loads(response.text)
+            if resp['api:message']=='OK':
+                    print(f'collected {coins}')
+    elif response.status_code==403:
+             collect(sid,coins,em,chatId)
+    else:
+             print(json.loads(response.text)["api:message"])
+             return None
+ 
+def login_custom(email: str, secret: str):
+        
+        try:
+            data = json.dumps({
+                "email": email,
+                # "phoneNumber":email,
+                "v": 2,
+                "secret":f"{secret}",
+                "deviceID":gen_deviceId(),
+                "clientType": 100,
+                "action": "normal",
+                "timestamp": int(timestamp() * 1000)
+            })
+            
+            
+            response = requests.post(f"{next(logins)}{api}/g/s/auth/login", headers=get_headers(data=data), data=data)
+            #print(response.text)
+            if response.status_code==200:
+                
+                return json.loads(response.text)["sid"]
+            elif response.status_code==403:
+                return login_custom(email,secret)
+            else:
+                print(response.text)
+                return None
+        except requests.exceptions.ProxyError as e:
+             print(e)
+             #return login_custom(email,secret)
+ 
+ 
+ 
+def join_com(sid,m,comId):
+        try:
+            data = {"timestamp": int(timestamp() * 1000)}
+            data = json.dumps(data)
+            
+            response = requests.post(f"{next(logins)}{api}/x{comId}/s/community/join", data=data, headers=get_headers(sid,data))
+            if response.status_code==200:
+                resp=json.loads(response.text)
+                if resp['api:message']=='OK':
+                        print(f'joined community: {m}')
+                        return True
+                else: return False
+            elif response.status_code==403:
+                return join_com(sid,m,comId)
+            else:
+                #  print(json.loads(response.text)["api:message"])
+                 return False
+                # comid.clear()
+                # comid.append("52193277")
+                # join_com(sid,comid[0])
+            
+        except:
+              return join_com(sid,m,comId)
+ 
+def leave_com(sid, m,comId):
+        
+        response = requests.post(f"{next(logins)}{api}/x{comId}/s/community/leave", headers=get_headers(sid))
+        if response.status_code != 200: 
+            return True
+        else:
+            return leave_com(sid,m,comId)
+ 
+ 
+def magic_num():
+    timing = {"start": int(datetime.timestamp(datetime.now())), "end": int(datetime.timestamp(datetime.now())) + 300}
+    return timing
+ 
+ 
+def gen(sid,i,m,comId):
+ try:
+    
+    chunk=[magic_num() for a in range(35)]
+    data = {"userActiveTimeChunkList": chunk,"timestamp": int(timestamp() * 1000),"optInAdsFlags": 2147483647,"timezone":190}
+    data = json_minify(json.dumps(data))
+    response = requests.post(f"{next(logins)}{api}/x{comId}/s/community/stats/user-active-time", headers=get_headers(sid,data), data=data)
+    if response.status_code==200:
+              
+              print(f'{json.loads(response.text)["api:message"]} {m} --- {i}')
+              #print(pp)
+    
+    else:
+             
+             print(json.loads(response.text)["api:message"])
+    return None
+    
+    
+ except requests.exceptions.ProxyError as e:
+      gen(sid,i,m,comId)
+    
+def gen_1(account):
+        
+        # if put.find_one({"email":account['email']}) is None:
+                          
+            sid=login_custom(account['email'],account['secret'])
+            
+            if sid:
+                    
+                    # dict={"email":account['email'],"secret":account['secret']}
+                    # put.insert_one(dict)
+                    m=account['email']
+                    print(f"logged in {m}")
+                    id_com=get_com()
+                    
+                    
+                    com=join_com(sid,m,id_com)
+                    if com:
+                            
+                            for i in range(1,25,1):
+                                gen(sid,i,m,id_com)
+                                sleep(1)
+                            #leave_com(sid,m,id_com)
+            else:
+                pass
+                
+        
+ 
+ 
+ 
+for em in secrets:
+      gen_1(em)
