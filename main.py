@@ -25,7 +25,7 @@ from json_minify import json_minify
 
 parameters = {
     "community-link":
-        "http://aminoapps.com/invite/77FC1LEDHT",
+        "http://aminoapps.com/invite/E5BQIXQ6LC",
     "accounts-file":
         "acc.json",
     "proxies": {
