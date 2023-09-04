@@ -8,7 +8,7 @@ from datetime import datetime
 from os import path
 import json
 THIS_FOLDER = path.dirname(path.abspath(__file__))
-emailfile=path.join(THIS_FOLDER,"accounts.json")
+emailfile=path.join(THIS_FOLDER,"acc.json")
 dictlist=[]
 cid="259501946" # community id here's
 
